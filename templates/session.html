@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ s.session_id }} · Edge Over Variance{% endblock %}
+{% block content %}
+<p><a class="back" href="/">← Decision-quality history</a></p>
+<h1>{{ s.session_id }} <span class="tag {{ s.domain }}">{{ s.domain }}</span></h1>
+<p class="lede">{{ s|length }} decisions · user {{ s.user_id or '—' }}</p>
+
+{% if strongest and weakest %}
+<section class="panel analysis-summary">
+  <p>Across this session your strongest dimension was
+     <strong class="good">{{ strongest.label }}</strong>
+     ({{ '%.0f'|format(strongest.score) }}/100) and your weakest was
+     <strong class="bad">{{ weakest.label }}</strong>
+     ({{ '%.0f'|format(weakest.score) }}/100).
+     {% if good_bad %}You had <strong>{{ good_bad }}</strong> "good decision, bad outcome"
+     moment{{ 's' if good_bad != 1 }} — correct plays that simply didn't pan out (those
+     still count as wins for your process).{% endif %}
+     {% if bad_good %} You also had <strong>{{ bad_good }}</strong> lucky result{{ 's' if bad_good != 1 }}
+     from a weak decision — don't bank the habit.{% endif %}
+  </p>
+</section>
+{% endif %}
+
+<h2>Decision quality, dimension by dimension</h2>
+<div class="dim-cards">
+  {% for a in analysis %}
+  <div class="dim-card {{ a.band }}">
+    <div class="dim-card-top">
+      <span class="dim-card-name">{{ a.label }}</span>
+      <span class="dim-card-score">{{ '%.0f'|format(a.score) if a.score is not none else 'n/a' }}</span>
+    </div>
+    <div class="meter"><span style="width: {{ a.score if a.score is not none else 0 }}%"
+         class="{{ 'good' if a.score is not none and a.score >= 70 else ('bad' if a.score is not none and a.score < 40 else 'mid') }}"></span></div>
+    <div class="dim-card-hint">{{ a.hint }}</div>
+    <div class="dim-card-def">{{ a.definition }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<h2>Replay</h2>
+<p class="muted">Each decision graded in sequence — watch quality and result diverge.</p>
+<table class="grid">
+  <thead>
+    <tr><th>#</th><th>Situation</th><th>You chose</th>
+        <th class="num">Adherence</th><th>Result</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+  {% for st in steps %}
+    <tr>
+      <td class="num">{{ st.index }}</td>
+      <td>{{ st.situation }}</td>
+      <td>{{ st.chosen }}</td>
+      <td class="num {{ 'good' if st.policy_adherence is not none and st.policy_adherence >= 70 else ('bad' if st.policy_adherence is not none and st.policy_adherence < 40 else '') }}">
+        {{ '%.0f'|format(st.policy_adherence) if st.policy_adherence is not none else '—' }}
+      </td>
+      <td>
+        {% if st.outcome_won is none %}<span class="muted">—</span>
+        {% elif st.outcome_won %}<span class="won">won</span>
+        {% else %}<span class="lost">lost</span>{% endif %}
+      </td>
+      <td class="note">
+        {% if st.process_violations %}<span class="viol">{{ st.process_violations|join(', ') }}</span>{% endif %}
+        {% if st.note %}<span class="teach">{{ st.note }}</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<details class="glossary big">
+  <summary>📖 What these scores mean — definitions of key terms</summary>
+  <div class="term-list">
+    {% for t in grading_terms %}
+      <div class="term"><span class="term-name">{{ t.term }}</span>
+        <span class="term-def">{{ t.definition }}</span></div>
+    {% endfor %}
+  </div>
+</details>
+{% endblock %}

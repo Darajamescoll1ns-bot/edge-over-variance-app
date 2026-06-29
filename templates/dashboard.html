@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Sessions · Edge Over Variance{% endblock %}
+{% block content %}
+<h1>Decision-quality history</h1>
+<p class="lede">Every decision is scored on five dimensions — independent of whether you
+won or lost. This is your track record across all saved sessions.</p>
+
+<section class="panel chart-panel">
+  <div class="chart-head">
+    <h2>Quality over time</h2>
+    <div class="chart-controls">
+      <div class="seg" id="dq-range" role="group" aria-label="Time range">
+        <button type="button" data-range="1d">1D</button>
+        <button type="button" data-range="1w">1W</button>
+        <button type="button" data-range="1m" class="active">1M</button>
+        <button type="button" data-range="all">All</button>
+      </div>
+      <select id="dq-metric" aria-label="Metric"></select>
+      <button type="button" id="dq-refresh" class="ghost" title="Refresh">⟳ Refresh</button>
+    </div>
+  </div>
+  <div id="dq-chart" class="chart-area"></div>
+  <p class="chart-foot muted">Like a price chart for your judgement: each point is a graded
+  decision (Overall) or a session score (per dimension). Use the range buttons to zoom in on
+  the last day, week or month, and Refresh after playing new hands.</p>
+</section>
+
+{% if agg.n_sessions %}
+<section class="stat-strip">
+  <div class="stat"><div class="stat-num">{{ agg.n_sessions }}</div><div class="stat-lbl">sessions</div></div>
+  <div class="stat"><div class="stat-num">{{ agg.total_decisions }}</div><div class="stat-lbl">decisions graded</div></div>
+  <div class="stat"><div class="stat-num good">{{ labels[agg.strongest] if agg.strongest else '—' }}</div><div class="stat-lbl">strongest dimension</div></div>
+  <div class="stat"><div class="stat-num bad">{{ labels[agg.weakest] if agg.weakest else '—' }}</div><div class="stat-lbl">biggest leak</div></div>
+</section>
+
+<section class="panel">
+  <h2>Career averages by dimension</h2>
+  <div class="dims">
+    {% for d in dims %}
+      {% set v = agg.means[d] %}
+      {% set b = band(v) %}
+      <div class="dim">
+        <div class="dim-label">{{ labels[d] }}</div>
+        <div class="meter"><span style="width: {{ v if v is not none else 0 }}%"
+             class="{{ 'good' if v is not none and v >= 70 else ('bad' if v is not none and v < 40 else 'mid') }}"></span></div>
+        <div class="dim-val">{{ '%.0f'|format(v) if v is not none else 'n/a' }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<h2>Sessions</h2>
+{% if not sessions %}
+  <div class="empty">
+    <p>No sessions stored yet.</p>
+    <p class="muted">Play hands in <a href="/play">Heads-up</a>, <a href="/play/table">Stud table</a>,
+       or <a href="/play/holdem">Hold'em</a> — or POST decisions to <code>/api/score</code>.</p>
+  </div>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Session</th><th>Domain</th><th>Decisions</th>
+      {% for d in dims %}<th class="num">{{ labels[d] }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in sessions %}
+    <tr>
+      <td><a href="/session/{{ row.session_id }}">{{ row.session_id }}</a></td>
+      <td><span class="tag {{ row.domain }}">{{ row.domain }}</span></td>
+      <td class="num">{{ row.n_decisions }}</td>
+      {% for d in dims %}
+        {% set v = row.scores[d] %}
+        <td class="num {{ 'good' if v is not none and v >= 70 else ('bad' if v is not none and v < 40 else '') }}">
+          {{ '%.0f'|format(v) if v is not none else '—' }}
+        </td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<details class="glossary big">
+  <summary>📖 How decisions are graded — definitions of key terms</summary>
+  <div class="term-list">
+    {% for t in grading_terms %}
+      <div class="term"><span class="term-name">{{ t.term }}</span>
+        <span class="term-def">{{ t.definition }}</span></div>
+    {% endfor %}
+  </div>
+</details>
+
+<script src="/static/history_chart.js"></script>
+{% endblock %}

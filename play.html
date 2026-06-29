@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Play a hand · Edge Over Variance{% endblock %}
+{% block content %}
+<div class="mode-switch">
+  <a class="active" href="/play">Stud heads-up</a>
+  <a href="/play/table">Stud table</a>
+  <a href="/play/holdem">Hold'em</a>
+</div>
+<h1>Seven-card stud — heads-up</h1>
+<p class="lede">Play it out street by street vs. one opponent. At showdown you'll be graded
+on every decision, then translate the key one to the markets.
+<span class="muted">Coach: {{ coach_source }}{% if coach_source == 'library' %}
+ (set <code>ANTHROPIC_API_KEY</code> for AI-tailored markets coaching){% endif %}</span></p>
+
+<div id="table" class="table">
+  <div class="seat villain">
+    <div class="seat-label">Villain (shows up-cards only)</div>
+    <div id="villain-cards" class="cards-row"></div>
+  </div>
+
+  <div class="potline"><span id="pot">Pot: —</span> <span id="street"></span></div>
+
+  <div class="seat hero">
+    <div class="seat-label">You</div>
+    <div id="hero-cards" class="cards-row"></div>
+  </div>
+
+  <div id="actions" class="actions"></div>
+  <div id="tocall" class="muted"></div>
+</div>
+
+<div id="log" class="playlog"></div>
+
+<div id="report" class="report" style="display:none"></div>
+
+<script src="/static/cards.js"></script>
+<script src="/static/report.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let HAND = null;
+
+function render(state){
+  HAND = state;
+  $('pot').textContent = 'Pot: ' + state.pot;
+  $('street').textContent = state.finished ? 'hand complete' : (state.street_name + ' street');
+
+  const opp = (state.opponents && state.opponents[0]) || {up:[], hidden:0};
+  const hv = $('villain-cards'); hv.innerHTML = '';
+  opp.up.forEach(c => hv.appendChild(makeCard(c, true)));
+  for (let i=0;i<opp.hidden;i++) hv.appendChild(makeCard('', false));
+
+  const hh = $('hero-cards'); hh.innerHTML = '';
+  state.hero.forEach(c => hh.appendChild(makeCard(c.card, true)));  // you always see your own
+
+  const log = $('log'); log.innerHTML = '';
+  (state.log||[]).forEach(line => {
+    const p = document.createElement('div'); p.textContent = line; log.appendChild(p);
+  });
+
+  const act = $('actions'); act.innerHTML = '';
+  $('tocall').textContent = '';
+  if (state.finished){
+    showReport(state);
+    return;
+  }
+  if (state.awaiting){
+    const bits = [];
+    if (state.awaiting.hero_stack != null) bits.push('Your stack: ' + state.awaiting.hero_stack);
+    if (state.awaiting.to_call > 0) bits.push('To call: ' + state.awaiting.to_call);
+    $('tocall').textContent = bits.join('  ·  ');
+    state.awaiting.options.forEach(o => {
+      const b = document.createElement('button');
+      b.textContent = o.label;
+      if (o.key === 'fold') b.classList.add('act-fold');
+      else if (o.key === 'check' || o.key === 'call') b.classList.add('act-call');
+      else b.classList.add('act-raise');
+      b.onclick = () => doAct(o.key);
+      act.appendChild(b);
+    });
+  }
+}
+
+async function newHand(){
+  $('report').style.display = 'none';
+  const r = await fetch('/api/hand/new', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  render(await r.json());
+}
+
+async function doAct(action){
+  const r = await fetch(`/api/hand/${HAND.hand_id}/act`,
+    {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action})});
+  render(await r.json());
+}
+
+newHand();
+</script>
+{% endblock %}

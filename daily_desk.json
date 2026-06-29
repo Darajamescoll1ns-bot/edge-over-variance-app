@@ -1,0 +1,145 @@
+{
+  "date": "2026-06-24",
+  "hands": [
+    {
+      "hand_id": "global_chip_crash_ai_panic",
+      "category": "markets",
+      "headline": "Global chip stocks crash as AI-trade fears wipe ~$1 trillion off the Nasdaq",
+      "source": "Bloomberg",
+      "source_url": "https://www.bloomberg.com/news/articles/2026-06-23/korean-stocks-fall-more-than-4-from-record-high-on-tech-selloff",
+      "summary": "On June 23 South Korea's KOSPI closed down roughly 10% with SK Hynix and Samsung off more than 12%, the SOX chip index fell ~8%, and the Nasdaq shed nearly $1 trillion as investors panicked over a debt-funded AI buildout and a more hawkish Fed. U.S. memory names spilled over, with Micron down ~13% ahead of its June 24 earnings.",
+      "analogy": "You're deep in a long on a red-hot sector that just gapped down hard with no single clean catalyst, only a broad de-risking. The whole table is suddenly scared. There's no read yet on whether sellers are done. Do you fold, jam the dip, or take a small look?",
+      "prompt": "Your momentum long just gapped down on stretched positioning. What's your move, and how big?",
+      "options": [
+        {
+          "key": "stand_aside",
+          "label": "Stand aside, wait for a base and volume confirmation",
+          "quality": 85,
+          "note": "Preserves capital and lets the fakeout-versus-real-break question resolve; with no confirmed edge, no bet is the bet."
+        },
+        {
+          "key": "small_probe",
+          "label": "Small starter probe, keep most powder dry",
+          "quality": 72,
+          "note": "Defensible if your long-term thesis is intact, but size stays small because the trend is broken and unconfirmed."
+        },
+        {
+          "key": "average_down_full",
+          "label": "Buy the dip full size and average down hard",
+          "quality": 18,
+          "note": "Catching a falling knife and over-sizing into a one-day crash with no confirmation; exactly the chasing the table punishes."
+        },
+        {
+          "key": "chase_short_full",
+          "label": "Short it full size and chase the move down",
+          "quality": 38,
+          "note": "The overvaluation thesis may be right, but full-sizing into an 8-10% one-day move invites a vicious snapback; entry and timing are poor."
+        }
+      ],
+      "best_key": "stand_aside",
+      "explanation": "With the trend broken and no volume confirmation of a bottom, the highest-quality play is to stand aside, or take a tiny probe, and let price prove itself. Averaging down full size into a crash, or chasing the short after the move, both mis-match size to a non-existent edge.",
+      "teaching": "Edge comes from waiting for the setup, not from refusing to be wrong. When a thesis is intact but price is unconfirmed, size down or sit out, because capital preserved is optionality kept. A crash is not automatically a buy; it is an invitation to wait for the retest.",
+      "terms": [
+        "edge",
+        "position sizing",
+        "averaging down",
+        "volume confirmation",
+        "retest",
+        "drawdown"
+      ]
+    },
+    {
+      "hand_id": "fed_dot_plot_flips_hawkish",
+      "category": "macro",
+      "headline": "Fed holds rates but flips its dot plot toward a hike; traders now eye October",
+      "source": "CNBC",
+      "source_url": "https://www.cnbc.com/2026/06/17/fed-interest-rate-decision-june-2026.html",
+      "summary": "At Kevin Warsh's first meeting as chair on June 17 the FOMC voted 12-0 to hold rates at 3.50-3.75% but erased its prior 2026 rate-cut projection and signaled a hike is possible, with markets now pricing a potential October increase as inflation stays above target.",
+      "analogy": "The macro thesis you were trading, that cuts are coming so buy duration, just got invalidated by the very people who set the rules. Your read on the board changed mid-hand. Do you keep firing on the old story or fold the busted draw and reassess?",
+      "prompt": "Your book is positioned for cuts and the Fed just contradicted it. What's your move, and how big?",
+      "options": [
+        {
+          "key": "cut_and_reassess",
+          "label": "Trim cut-sensitive positions, reassess with new info",
+          "quality": 86,
+          "note": "Updates on fresh information and reduces exposure to a thesis the rule-setters just contradicted."
+        },
+        {
+          "key": "small_hawkish_tilt",
+          "label": "Small tilt toward higher-for-longer, stay flexible",
+          "quality": 75,
+          "note": "Sizes to the strength of the signal: directionally sound without betting the stack on one dot plot."
+        },
+        {
+          "key": "flip_max_hawkish",
+          "label": "Flip fully hawkish, max short bonds now",
+          "quality": 42,
+          "note": "Right direction perhaps, but a single-meeting signal is not conviction-grade; over-sizing on one data point."
+        },
+        {
+          "key": "add_cut_bets",
+          "label": "Add to rate-cut bets, the Fed will flip back",
+          "quality": 24,
+          "note": "Fighting an invalidated thesis and adding size against fresh information; classic stubbornness."
+        }
+      ],
+      "best_key": "cut_and_reassess",
+      "explanation": "When the body that controls your thesis explicitly contradicts it, the disciplined move is to cut exposure and reassess rather than add. A small hawkish tilt is fine, but flipping max size on one meeting over-sizes a still-uncertain signal.",
+      "teaching": "A thesis is a hypothesis, not a vow. When the evidence changes, especially from the body that sets the outcome, update fast and let position size track conviction rather than ego. Defending an invalidated view is how variance turns into ruin.",
+      "terms": [
+        "thesis",
+        "position sizing",
+        "conviction sizing",
+        "catalyst",
+        "tilt"
+      ]
+    },
+    {
+      "hand_id": "oil_three_month_low_iran",
+      "category": "energy",
+      "headline": "Oil sinks to a three-month low near $73 as Iran ceasefire and US waiver flood supply",
+      "source": "Trading Economics",
+      "source_url": "https://tradingeconomics.com/commodity/crude-oil",
+      "summary": "WTI crude fell to about $73 a barrel on June 23, its lowest in nearly three months, after an interim Iran peace deal and a new 60-day US waiver let global buyers purchase Iranian crude, with Persian Gulf supply rising. The unwind sits against tail risk after Iran's June 20 claim it closed the Strait of Hormuz, which the US denied.",
+      "analogy": "The dominant narrative, a war-premium supply shock, is unwinding fast and price is sliding. But there's a live binary on the board, the Strait could actually close, that would violently reverse the move overnight. You like the downtrend. Do you press the short, go flat, or ride it smaller with protection?",
+      "prompt": "You have a real edge short, but a fat-tail headline could gap it against you. What's your move, and how big?",
+      "options": [
+        {
+          "key": "sized_short_stop",
+          "label": "Stay short but smaller, with a defined stop above",
+          "quality": 86,
+          "note": "Rides the real downtrend while capping the tail risk; risk per trade is defined and survivable."
+        },
+        {
+          "key": "flat_wait",
+          "label": "Go flat, the headline risk is unreadable",
+          "quality": 64,
+          "note": "Defensible capital preservation, but it leaves a genuine edge, supply normalizing, completely unused."
+        },
+        {
+          "key": "press_short_full",
+          "label": "Press the short full size, the war premium is dead",
+          "quality": 34,
+          "note": "The trend is your friend, but full-sizing into a known binary tail risk invites an overnight gap against you."
+        },
+        {
+          "key": "buy_dip_spike",
+          "label": "Buy the dip betting on a Strait re-closure spike",
+          "quality": 28,
+          "note": "Speculating on a low-probability tail catalyst against the prevailing trend; lottery-ticket sizing dressed as a thesis."
+        }
+      ],
+      "best_key": "sized_short_stop",
+      "explanation": "The edge is real, supply is normalizing and the premium is unwinding, so you want exposure, but a live binary like a Strait closure means you size down and define your stop. Full-sizing into a known gap risk, or buying for a low-odds spike, both mis-match size to the actual edge.",
+      "teaching": "When a trade has a real edge but a fat-tailed catalyst, the answer is rarely all-or-nothing; it is a smaller position with a hard stop. Position sizing, not direction, is what keeps a good thesis from being ruined by a single overnight headline.",
+      "terms": [
+        "thesis",
+        "position sizing",
+        "stop-loss",
+        "catalyst",
+        "edge",
+        "variance"
+      ]
+    }
+  ]
+}

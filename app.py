@@ -381,8 +381,42 @@ def api_hand_report(hand_id: str):
     if not st.finished:
         return JSONResponse({"error": "hand not finished"}, status_code=400)
     if entry["report"] is None:
-        entry["report"] = coachmod.full_report(st.history)
+        # FAST path only: grades + equity + implied odds, NO markets AI call.
+        # The markets lesson is fetched separately via /translation so the
+        # numbers show in a couple of seconds instead of after the LLM call.
+        report, grades, key = coachmod.analytics(st.history)
+        entry["report"] = report
+        entry["grades"] = grades
+        entry["key"] = key
     return entry["report"]
+
+
+def _ensure_translation(entry):
+    """Compute (once) the markets translation for a graded hand and cache it on
+    the report. Kept separate from /report so it can run in the background."""
+    report = entry.get("report")
+    if report is None:
+        return None
+    if report.get("translation") is None and entry.get("key") is not None:
+        coach = coachmod.get_coach()
+        report["translation"] = coachmod.translation_for(
+            entry.get("grades"), entry.get("key"), coach)
+        report["coach_source"] = getattr(coach, "source", "library")
+    return report.get("translation")
+
+
+@app.get("/api/hand/{hand_id}/translation")
+def api_hand_translation(hand_id: str):
+    """The markets lesson for a finished hand — the slow (possibly AI) step,
+    loaded on its own so it never blocks the equity analytics."""
+    entry = HANDS.get(hand_id)
+    if entry is None:
+        return JSONResponse({"error": "unknown hand"}, status_code=404)
+    if entry.get("report") is None:
+        return JSONResponse({"error": "no report yet"}, status_code=400)
+    translation = _ensure_translation(entry)
+    return {"translation": translation,
+            "coach_source": entry["report"].get("coach_source", "library")}
 
 
 @app.post("/api/hand/{hand_id}/answer")
@@ -393,7 +427,7 @@ async def api_hand_answer(hand_id: str, request: Request):
         return JSONResponse({"error": "no report for hand"}, status_code=400)
     body = await request.json()
     answer = (body or {}).get("answer", "")
-    tr = entry["report"].get("translation") or {}
+    tr = _ensure_translation(entry) or {}
     coach = coachmod.get_coach()
     result = coach.evaluate_answer(tr.get("question", ""),
                                    tr.get("model_answer", ""), answer)

@@ -878,21 +878,46 @@ def _attach_implied(key, history):
         pass            # implied odds are a bonus; never break the report
 
 
-def full_report(history, coach=None) -> dict:
-    coach = coach or get_coach()
+def analytics(history):
+    """FAST path: grade every decision + attach implied odds, but SKIP the
+    markets translation (a slow LLM/network call). Returns
+    (report_dict, grades, key) so the caller can compute the translation
+    separately/lazily. `report_dict["translation"]` is None here.
+
+    This is what makes the hand report appear in a couple of seconds instead of
+    waiting on the AI markets lesson."""
     grades = grade_hand(history)
     overview = hand_overview(grades)
     key = pick_key_decision(grades)
     if key is not None:
         _attach_implied(key, history)
-    translation = coach.translate(grades, key) if key else None
-    return {
+    report = {
         "overview": overview,
         "streets": [asdict(g) for g in grades],
         "key_decision": asdict(key) if key else None,
-        "translation": translation,
-        "coach_source": getattr(coach, "source", "library"),
+        "translation": None,
     }
+    return report, grades, key
+
+
+def translation_for(grades, key, coach=None) -> Optional[dict]:
+    """The markets translation for a graded hand — the slow step, isolated so it
+    can run after the analytics are already on screen."""
+    if key is None:
+        return None
+    coach = coach or get_coach()
+    return coach.translate(grades, key)
+
+
+def full_report(history, coach=None) -> dict:
+    """Analytics + markets translation in one call (used by tests/CLI). The web
+    app uses `analytics()` + `translation_for()` so the slow translation doesn't
+    block the numbers."""
+    coach = coach or get_coach()
+    report, grades, key = analytics(history)
+    report["translation"] = translation_for(grades, key, coach)
+    report["coach_source"] = getattr(coach, "source", "library")
+    return report
 
 
 # --------------------------------------------------------------------------- #

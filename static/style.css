@@ -267,7 +267,19 @@ button.ghost.spin{opacity:.6}
 .dq-empty{fill:var(--muted);font-size:13px}
 .dq-dot{cursor:pointer;transition:r .1s}
 .dq-dot:hover{r:5}
-.dq-loading{padding:40px 0;text-align:center}
+.dq-loading{padding:40px 0;text-align:center;animation:fadeIn .2s ease}
+.dq-loading .spinner{width:34px;height:34px;margin:0 auto 14px;border-radius:50%;
+  border:3px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dq-loading .load-msg{font-weight:700;color:var(--ink)}
+.dq-loading .load-msg::after{display:inline-block;width:1.1em;text-align:left;
+  content:'';animation:dqdots 1.4s steps(4,end) infinite}
+@keyframes dqdots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}100%{content:''}}
+.dq-loading .load-sub{color:var(--muted);font-size:13px;margin-top:4px}
+@media (prefers-reduced-motion: reduce){
+  .dq-loading .spinner{animation:none}
+  .dq-loading .load-msg::after{animation:none;content:'…'}
+}
 .dq-tip{position:absolute;transform:translate(-50%,-100%);background:var(--ink);color:#fff;
   font-size:12px;line-height:1.35;padding:7px 10px;border-radius:8px;pointer-events:none;white-space:nowrap;
   box-shadow:0 4px 14px rgba(22,40,58,.28);z-index:5}

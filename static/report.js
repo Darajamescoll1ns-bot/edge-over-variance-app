@@ -62,15 +62,21 @@ function _decisionCard(s){
     + `</div>`;
 }
 
-function reportHtml(rep, res){
-  const t = rep.translation || {};
-  let html = `<h2>Hand report</h2>`;
+// A small animated loader shown while a phase is computing.
+function _loader(msg, sub){
+  return `<div class="dq-loading"><div class="spinner" aria-hidden="true"></div>`
+       + `<div class="load-msg">${_esc(msg)}</div>`
+       + (sub ? `<div class="load-sub">${_esc(sub)}</div>` : '')
+       + `</div>`;
+}
 
+// The equity analytics (result, grades, math) — the fast part, no AI call.
+function analyticsHtml(rep, res){
   // Result line (board shown for Hold'em; opponents' shown hands otherwise).
   const sd = (res.showdown||[]).filter(s => s.name!=='You')
               .map(s => `${_esc(s.name)}: ${_esc((s.cards||[]).join(' '))}`).join(' · ');
   const board = (res.board && res.board.length) ? ` Board: ${_esc(res.board.join(' '))}.` : '';
-  html += `<p class="result-line ${res.winner_is_hero?'won':'lost'}">`
+  let html = `<p class="result-line ${res.winner_is_hero?'won':'lost'}">`
         + `Result: <strong>${_esc(res.winner||'—')}</strong> by ${_esc(res.by||'—')} `
         + `(pot ${_esc(res.pot)}).${board}${sd?` ${sd}.`:''}</p>`;
 
@@ -94,9 +100,17 @@ function reportHtml(rep, res){
     html += `<details class="glossary" open><summary>📐 The math behind each decision</summary>`
           + `<div class="m-list">${mathRows.map(_decisionCard).join('')}</div></details>`;
   }
+  return html;
+}
 
-  // Markets translation — the teaching moment.
-  html += `<div class="explain">`
+// The markets translation (teaching moment + answer box) — the slow AI part,
+// rendered once its own fetch resolves.
+function marketsHtml(t){
+  if(!t){
+    return `<div class="explain"><div class="explain-head"><span class="badge">Markets lesson</span></div>`
+         + `<p class="load-sub">No markets lesson is available for this hand.</p></div>`;
+  }
+  let html = `<div class="explain">`
         + `<div class="explain-head"><span class="badge">Markets lesson</span>`
         + `<h3>From the felt to the screen — ${_esc(t.lesson||'')}</h3></div>`
         + `<p>${_esc(t.analogy||'')}</p>`;
@@ -109,19 +123,51 @@ function reportHtml(rep, res){
         + `<textarea id="answer" rows="4" placeholder="What would you do, and why? Reason from edge, expected value, and risk."></textarea>`
         + `<button onclick="submitAnswer()">Submit answer</button>`
         + `<div id="answer-feedback"></div></div>`;
-
-  html += `<p style="margin-top:18px"><button class="primary" onclick="newHand()">Deal again →</button></p>`;
   return html;
 }
 
+// Two-phase render: show the analytics fast (behind a spinner), then load the
+// markets lesson separately so the slow AI call never blocks the numbers.
 async function showReport(HAND){
-  const r = await fetch(`/api/hand/${HAND.hand_id}/report`);
-  if(!r.ok) return;
-  const rep = await r.json();
   window._HAND = HAND;
   const el = document.getElementById('report');
-  el.innerHTML = reportHtml(rep, HAND.result || {});
   el.style.display = 'block';
+  el.innerHTML = _loader('Crunching the analytics',
+                         'Simulating equities and grading every street…');
+
+  let rep;
+  try {
+    const r = await fetch(`/api/hand/${HAND.hand_id}/report`);
+    if(!r.ok) throw new Error('report');
+    rep = await r.json();
+  } catch(e){
+    el.innerHTML = `<p class="lede">Couldn't load the hand report. `
+                 + `<button class="primary" onclick="newHand()">Deal again →</button></p>`;
+    return;
+  }
+  window._REP = rep;
+
+  el.innerHTML = `<h2>Hand report</h2>`
+    + analyticsHtml(rep, HAND.result || {})
+    + `<div id="markets">${_loader('Writing your markets lesson',
+                                    'Turning the key decision into a trading scenario…')}</div>`
+    + `<p style="margin-top:18px"><button class="primary" onclick="newHand()">Deal again →</button></p>`;
+
+  loadMarkets(HAND);
+}
+
+// Phase two — the markets translation (may be a slow AI call).
+async function loadMarkets(HAND){
+  const mount = document.getElementById('markets');
+  if(!mount) return;
+  try {
+    const r = await fetch(`/api/hand/${HAND.hand_id}/translation`);
+    const data = r.ok ? await r.json() : {};
+    if(window._REP) window._REP.translation = data.translation || null;
+    mount.innerHTML = marketsHtml(data.translation);
+  } catch(e){
+    mount.innerHTML = marketsHtml(null);
+  }
 }
 
 async function submitAnswer(){

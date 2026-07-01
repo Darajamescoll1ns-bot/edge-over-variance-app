@@ -35,9 +35,24 @@ from typing import List, Optional
 import solver as sv
 import glossary as gloss
 import betting
+import ranges as rng_mod
+import rollout as ro
 
 GRADING_SEED = 12345        # fixed so grades are reproducible
 GRADING_ITERS = 1600
+
+# Conditioned-equity grading (heads-up). The opponent's range is narrowed the
+# way game theory says a defender must (MDF), so the EVs reflect "equity when
+# called" rather than equity vs a random hand. Iteration/combo budgets are kept
+# modest so a full hand grades in a few seconds; raise them for sharper numbers.
+COND_ITERS_PRE = 90         # preflop per-class Monte-Carlo iterations
+COND_ITERS_POST = 60        # postflop per-combo iterations
+COND_MAX_COMBOS = 160       # postflop combo sample cap (live speed)
+STUD_ITERS = 60             # stud per-hidden-combo iterations
+STUD_MAX_COMBOS = 160       # stud hidden-combo sample cap
+BET_RANGE_FREQ = 0.5        # a bettor shows up with ~the strongest half of range
+ROLLOUT_TRIALS = 300        # implied-odds rollout trials for the spotlight spot
+MULTIWAY_ITERS = 700        # Monte-Carlo trials for a multiway conditioned grid
 
 
 # =========================================================================== #
@@ -60,6 +75,15 @@ class StreetGrade:
     pot: float = 0.0
     to_call: float = 0.0
     math: str = ""               # plain-language EV math for this decision
+    # --- conditioned-equity additions ---------------------------------------
+    equity_vs_random: float = 0.0    # hero equity vs the opponent's WHOLE range
+    equity_effective: float = 0.0    # equity that actually applies to the chosen
+                                     # action (when called / vs a bettor)
+    fold_equity: float = 0.0         # GTO fold share an aggressive line earns
+    mdf: float = 0.0                 # continue frequency implied by the bet size
+    implied: Optional[dict] = None   # rollout implied-odds breakdown (key spot)
+    conditioned: bool = False        # True if the range model ran (else multiway
+                                     # fallback to the old vs-random EV)
 
 
 def _fold_equity(amount, pot):
@@ -113,6 +137,27 @@ def _archetype(action_family: str, equity: float) -> str:
     return "marginal_continue"
 
 
+def _grade_archetype(fam: str, eff: float, loss_norm: float) -> str:
+    """Pick the teaching archetype from EV-correctness first, then equity.
+
+    Crucially this separates a SOUND low-equity aggressive line (a bluff/semi-
+    bluff that's +EV on fold equity — 'marginal_continue', defensible) from an
+    EV-LOSING one ('chase', a genuine mistake). The old _archetype keyed only on
+    equity and would mislabel every thin bet a chase now that equity is
+    conditioned on being called."""
+    mistake = loss_norm > 0.12
+    strong, weak = eff >= 0.58, eff <= 0.42
+    if fam == "fold":
+        return "premature_fold" if (mistake and not weak) else "disciplined_fold"
+    if fam in ("bet", "raise", "allin", "call"):
+        if mistake:
+            return "chase"
+        return "press_edge" if strong else "marginal_continue"
+    if fam == "check":
+        return "missed_value" if strong else "marginal_continue"
+    return "marginal_continue"
+
+
 _WHY = {
     "press_edge": "You held the best of it (equity {e:.0%}) and applied pressure — "
                   "that's getting value with a real edge.",
@@ -129,9 +174,110 @@ _WHY = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Conditioned-equity helpers (heads-up). The opponent is modelled as a range
+# that folds its weakest hands (MDF), so EVs use "equity when called", not
+# equity vs a random hand.
+# --------------------------------------------------------------------------- #
+def _decision_range(game, g, seed):
+    """Build the opponent-range samples ONCE for a decision, heads-up only.
+    Returns (vs_random, samples, total_w) or None for multiway/fallback."""
+    try:
+        if game == "holdem":
+            if max(1, int(g("num_live_opponents") or 1)) != 1:
+                return None
+            board = g("board_cards") or []
+            samples, total_w, vs_random, combos = rng_mod.holdem_range_samples(
+                g("hero_hole_cards"), board,
+                iterations=(COND_ITERS_PRE if not board else COND_ITERS_POST),
+                max_combos=(None if not board else COND_MAX_COMBOS), seed=seed)
+            return samples, total_w, vs_random, combos
+        else:
+            opp_lists = g("opponents_up_cards")
+            if opp_lists is None:
+                legacy = g("villain_up_cards")
+                opp_lists = [legacy] if legacy is not None else []
+            if len(opp_lists) != 1:
+                return None
+            samples, total_w, vs_random = rng_mod.stud_range_samples(
+                g("hero_known_cards"), opp_lists[0],
+                iterations=STUD_ITERS, max_combos=STUD_MAX_COMBOS, seed=seed)
+            return samples, total_w, vs_random, None      # no combo-level rollout for stud
+    except Exception:
+        return None          # never let the richer model break grading
+
+
+def _multiway_grid(game, g, seed):
+    """Build a multiway conditioned grid (each opponent folds its weakest hands,
+    MDF) when there are 2+ live opponents. None otherwise."""
+    try:
+        if game == "holdem":
+            n = max(1, int(g("num_live_opponents") or 1))
+            if n < 2:
+                return None
+            return rng_mod.holdem_multiway_grid(
+                g("hero_hole_cards"), g("board_cards") or [], n,
+                iterations=MULTIWAY_ITERS, seed=seed)
+        opp_lists = g("opponents_up_cards")
+        if opp_lists is None:
+            legacy = g("villain_up_cards")
+            opp_lists = [legacy] if legacy is not None else []
+        if len(opp_lists) < 2:
+            return None
+        return rng_mod.stud_multiway_grid(
+            g("hero_known_cards"), opp_lists,
+            iterations=MULTIWAY_ITERS, seed=seed)
+    except Exception:
+        return None
+
+
+def _equity_vs_betting_range(samples, total_w):
+    """Hero equity vs the hands that would BET — the strongest BET_RANGE_FREQ of
+    the opponent's range (the low-hero-equity end of the sorted samples)."""
+    if total_w <= 0:
+        return 0.0
+    target = BET_RANGE_FREQ * total_w
+    w = e = 0.0
+    for eq, ww in samples:           # ascending hero equity => strongest villain first
+        if w >= target:
+            break
+        take = min(ww, target - w)
+        e += eq * take
+        w += take
+    return (e / w) if w > 0 else (sum(eq * ww for eq, ww in samples) / total_w)
+
+
+def _cond_option_evs(options, samples, total_w, vs_random, pot):
+    """EV per option using the conditioned range: aggressive options face the
+    top-MDF continue range plus GTO fold equity; calls face the betting range."""
+    evs, extra = {}, {}
+    for o in options:
+        key, amt, label = o["key"], float(o.get("amount", 0.0)), o["label"]
+        if key == "fold":
+            ev, info = 0.0, {}
+        elif key == "check":
+            ev, info = vs_random * pot, {"e": vs_random}
+        elif key == "call":
+            e_call = _equity_vs_betting_range(samples, total_w)
+            ev = e_call * pot - (1 - e_call) * amt
+            info = {"e": e_call}
+        else:                                    # bet / raise / all-in
+            keep = rng_mod.mdf(amt, pot)
+            e_called, _vf, _n = rng_mod.slice_continue(samples, total_w, keep)
+            fe = amt / (pot + amt) if (pot + amt) > 0 else 0.0
+            called = e_called * (pot + amt) - (1 - e_called) * amt
+            ev = fe * pot + (1 - fe) * called
+            info = {"e": e_called, "fold_equity": fe, "mdf": keep}
+        evs[label] = round(ev, 3)
+        extra[label] = info
+    return evs, extra
+
+
 def grade_hand(history: List) -> List[StreetGrade]:
     """Grade each recorded hero decision. `history` is a list of HeroDecision
-    (from stud_game) — dataclasses or dicts."""
+    (dataclasses or dicts). Heads-up decisions are graded against a CONDITIONED
+    opponent range (MDF continue range => equity when called); multiway spots
+    fall back to the original equity-vs-field EV model."""
     grades: List[StreetGrade] = []
     for h in history:
         g = _wrapget(h)
@@ -139,27 +285,64 @@ def grade_hand(history: List) -> List[StreetGrade]:
         action_key = g("action")
         chosen = next((o for o in options if o.get("key") == action_key), None)
         chosen_label = g("action_label") or (chosen["label"] if chosen else action_key)
+        chosen_amt = float(chosen.get("amount", 0.0)) if chosen else 0.0
         pot = float(g("pot"))
         to_call = float(g("to_call"))
         game = g("game") or "stud"
+        fam = betting.family(action_key) if action_key else "check"
 
-        if game == "holdem":
-            # Hold'em: equity from hole cards + shared board vs N unknown hands.
-            equity = sv.holdem_equity(
-                g("hero_hole_cards"), g("board_cards") or [],
-                max(1, int(g("num_live_opponents") or 1)),
-                iterations=GRADING_ITERS, seed=GRADING_SEED)
+        rng_ctx = _decision_range(game, g, GRADING_SEED)
+        grid = None if rng_ctx is not None else _multiway_grid(game, g, GRADING_SEED)
+
+        if rng_ctx is not None:
+            # ---- conditioned (heads-up) model --------------------------------
+            samples, total_w, vs_random, _combos = rng_ctx
+            evs, extra = _cond_option_evs(options, samples, total_w, vs_random, pot)
+            conditioned = True
+            # equity that actually applies to the action hero took:
+            if fam in ("bet", "raise", "allin"):
+                keep = rng_mod.mdf(chosen_amt, pot)
+                eff, _vf, _n = rng_mod.slice_continue(samples, total_w, keep)
+                fold_eq = chosen_amt / (pot + chosen_amt) if (pot + chosen_amt) > 0 else 0.0
+            elif fam == "call":
+                eff = _equity_vs_betting_range(samples, total_w)
+                keep, fold_eq = 1.0, 0.0
+            else:
+                eff, keep, fold_eq = vs_random, 1.0, 0.0
+            headline = vs_random
+        elif grid is not None:
+            # ---- multiway conditioned model: each opponent folds weak (MDF) ---
+            evs = {o["label"]: round(grid.ev_option(o, pot, to_call), 3) for o in options}
+            conditioned = True
+            vs_random = grid.vs_random
+            if fam in ("bet", "raise", "allin"):
+                keep = rng_mod.mdf(chosen_amt, pot)
+                eff = grid.equity_when_called(chosen_amt, pot)
+                fold_eq = grid.fold_all_prob(chosen_amt, pot)
+            elif fam == "call":
+                eff = grid.equity_vs_callers(to_call, pot)
+                keep, fold_eq = 1.0, 0.0
+            else:
+                eff, keep, fold_eq = vs_random, 1.0, 0.0
+            headline = vs_random
         else:
-            # Stud: equity vs every live opponent's exposed up-cards.
-            hero_cards = g("hero_known_cards")
-            opp_lists = g("opponents_up_cards")
-            if opp_lists is None:
-                legacy = g("villain_up_cards")     # backward-compat with old snapshots
-                opp_lists = [legacy] if legacy is not None else []
-            equity = sv.monte_carlo_equity_multi(
-                hero_cards, opp_lists, iterations=GRADING_ITERS, seed=GRADING_SEED)
+            # ---- multiway / fallback: original vs-field model ----------------
+            if game == "holdem":
+                headline = sv.holdem_equity(
+                    g("hero_hole_cards"), g("board_cards") or [],
+                    max(1, int(g("num_live_opponents") or 1)),
+                    iterations=GRADING_ITERS, seed=GRADING_SEED)
+            else:
+                hero_cards = g("hero_known_cards")
+                opp_lists = g("opponents_up_cards")
+                if opp_lists is None:
+                    legacy = g("villain_up_cards")
+                    opp_lists = [legacy] if legacy is not None else []
+                headline = sv.monte_carlo_equity_multi(
+                    hero_cards, opp_lists, iterations=GRADING_ITERS, seed=GRADING_SEED)
+            evs = _option_evs(options, headline, pot)
+            vs_random, eff, keep, fold_eq, conditioned = headline, headline, 1.0, 0.0, False
 
-        evs = _option_evs(options, equity, pot)
         best_label = max(evs, key=evs.get) if evs else chosen_label
         best_opt = next((o for o in options if o["label"] == best_label), chosen)
         best_ev = evs.get(best_label, 0.0)
@@ -168,64 +351,102 @@ def grade_hand(history: List) -> List[StreetGrade]:
         ev_loss = max(0.0, best_ev - taken_ev)
         loss_norm = min(1.0, ev_loss / denom)
         adherence = round(100.0 * (1.0 - loss_norm), 1)
-        fam = betting.family(action_key) if action_key else "check"
-        arche = _archetype(fam, equity)
-        math = _decision_math(chosen, best_opt, equity, pot, to_call,
-                              taken_ev, best_ev)
+        arche = _grade_archetype(fam, eff, loss_norm)   # EV-first, then equity
+        math = _decision_math(chosen, best_opt, headline, pot, to_call,
+                              taken_ev, best_ev, vs_random=vs_random,
+                              eff=eff, conditioned=conditioned, fold_eq=fold_eq)
         grades.append(StreetGrade(
             street=g("street"), street_name=g("street_name"),
-            action=chosen_label, options=options, equity=round(equity, 3),
+            action=chosen_label, options=options, equity=round(headline, 3),
             option_evs=evs, best_action=best_label,
             ev_loss_normalized=round(loss_norm, 3), adherence=adherence,
-            archetype=arche, why=_WHY[arche].format(e=equity),
+            archetype=arche, why=_WHY[arche].format(e=eff),
             pot=round(pot, 1), to_call=round(to_call, 1), math=math,
+            equity_vs_random=round(vs_random, 3), equity_effective=round(eff, 3),
+            fold_equity=round(fold_eq, 3), mdf=round(keep, 3),
+            conditioned=conditioned,
         ))
     return grades
 
 
-def _decision_math(chosen, best, e, pot, to_call, taken_ev, best_ev) -> str:
-    """Plain-language EV math justifying the grade — concise, but with a quick
-    note on what each figure means. `e` = your win probability (equity); pot and
-    amounts are in chips; EV is the average chip result of repeating the spot."""
-    e_pct = f"{e:.0%}"
-    parts = []
+def _decision_math(chosen, best, e, pot, to_call, taken_ev, best_ev,
+                   vs_random=None, eff=None, conditioned=False, fold_eq=0.0,
+                   implied=None) -> str:
+    """Plain-language EV math justifying the grade. When the conditioned model
+    ran, the EV uses 'equity when called / vs a bettor' (`eff`) and contrasts it
+    with the vs-a-random-hand figure (`vs_random`) — the exact lesson the trainer
+    exists to teach. `implied`, if present, is the rollout implied-odds result."""
     if chosen is None:
         return ""
     key = chosen.get("key", "")
     amt = chosen.get("amount", 0.0)
-    # One-line key so the numbers aren't opaque.
-    parts.append(f"(equity {e_pct} = your chance to win the pot; EV = average chips "
-                 f"won/lost if you made this play many times.)")
+    eff = e if eff is None else eff
+    parts = ["(equity = your chance to win the pot; EV = average chips won/lost "
+             "over many repeats.)"]
 
     if key == "call":
         be = to_call / (pot + to_call) if (pot + to_call) > 0 else 0.0
-        parts.append(
-            f"Pot is {pot:g}, it costs {to_call:g} to call. Break-even equity = "
-            f"cost ÷ (pot + cost) = {to_call:g}/{pot + to_call:g} = {be:.0%} — the "
-            f"win rate that makes calling free. You have {e_pct}, "
-            f"{'above' if e >= be else 'below'} that, so EV(call) = "
-            f"{e:.2f}×{pot:g} (win the pot) − {1 - e:.2f}×{to_call:g} (lose the call) "
-            f"= {taken_ev:+.2f}.")
+        # When the rollout ran, quote ITS internally-consistent showdown numbers
+        # so the "true EV" line below reconciles exactly.
+        e_show = implied.get("equity_realised", eff) if implied else eff
+        ev_show = implied.get("ev_immediate", taken_ev) if implied else taken_ev
+        parts.append(f"Pot {pot:g}, call {to_call:g}; break-even equity "
+                     f"{to_call:g}/{pot + to_call:g} = {be:.0%}.")
+        if conditioned and vs_random is not None:
+            parts.append(
+                f"Versus a RANDOM hand you'd have {vs_random:.0%} — but players betting "
+                f"into you turn up with stronger hands, so your real equity is "
+                f"~{e_show:.0%}. On showdown alone EV(call) = {e_show:.2f}×{pot:g} − "
+                f"{1 - e_show:.2f}×{to_call:g} = {ev_show:+.2f} "
+                f"({'above' if e_show >= be else 'below'} the price).")
+        else:
+            parts.append(f"You have {e_show:.0%}, so EV(call) = {e_show:.2f}×{pot:g} − "
+                         f"{1 - e_show:.2f}×{to_call:g} = {ev_show:+.2f}.")
     elif key == "fold":
-        parts.append(f"Folding always = 0 EV (you put in nothing more). With {e_pct} "
-                     f"equity the best alternative was worth {best_ev:+.2f}, so folding "
-                     f"is {'fine' if best_ev <= 0.05 else 'leaving chips behind'}.")
+        parts.append(f"Folding = 0 EV. The best alternative was worth {best_ev:+.2f}, "
+                     f"so folding is "
+                     f"{'fine' if best_ev <= 0.05 else 'leaving chips behind'}.")
     elif key == "check":
-        parts.append(f"Checking costs nothing, so you simply realise your {e_pct} share "
-                     f"of the {pot:g} pot → EV ≈ {e:.2f}×{pot:g} = {taken_ev:+.2f}.")
+        parts.append(f"Checking is free: you realise your {eff:.0%} share of the "
+                     f"{pot:g} pot → EV ≈ {eff:.2f}×{pot:g} = {taken_ev:+.2f}.")
     else:  # bet / raise / all-in
-        fe = _fold_equity(amt, pot)
-        parts.append(
-            f"You risk {amt:g} chips. Fold equity ≈ {fe:.0%} (how often the bet wins "
-            f"the {pot:g} pot uncontested); when called, EV = {e:.2f}×(pot+{amt:g}) − "
-            f"{1 - e:.2f}×{amt:g}. Blended EV ≈ {taken_ev:+.2f}.")
+        if conditioned:
+            keep = rng_mod.mdf(amt, pot)
+            vr = vs_random if vs_random is not None else e
+            if eff < vr - 0.005:
+                rel = f"drops to ~{eff:.0%}"
+            elif eff > vr + 0.005:
+                rel = f"is ~{eff:.0%} (a smaller but stronger field)"
+            else:
+                rel = f"holds ~{eff:.0%}"
+            parts.append(
+                f"Bet {amt:g} into {pot:g}: by MDF a defender continues with the top "
+                f"{keep:.0%} of hands, folding {fold_eq:.0%} (your fold equity). Against "
+                f"the hands that CALL your equity {rel} (vs {vr:.0%} against a random "
+                f"hand). Blended EV ≈ {taken_ev:+.2f}.")
+        else:
+            fe = _fold_equity(amt, pot)
+            parts.append(
+                f"You risk {amt:g}. Fold equity ≈ {fe:.0%}; when called EV = "
+                f"{eff:.2f}×(pot+{amt:g}) − {1 - eff:.2f}×{amt:g}. Blended ≈ "
+                f"{taken_ev:+.2f}.")
+
+    if implied:
+        d = implied.get("implied_delta")
+        ev_call = implied.get("ev_call")
+        if d is not None and ev_call is not None:
+            verb = "adds" if d >= 0 else "subtracts"
+            tail = (" (you win extra when you improve)." if d >= 0
+                    else " (reverse implied odds — you pay off better hands).")
+            parts.append(f"Simulating the rest of the hand, implied odds {verb} "
+                         f"{abs(d):.1f} chips → true EV ≈ {ev_call:+.1f}{tail}")
 
     if best is not None and best.get("label") != chosen.get("label"):
         gap = best_ev - taken_ev
         parts.append(f"Best option was “{best['label']}” at EV {best_ev:+.2f} — you "
-                     f"gave up {gap:.2f} chips versus the optimal play.")
+                     f"gave up {gap:.2f} chips vs the optimal play.")
     else:
-        parts.append("That was the highest-EV option — correctly sized.")
+        parts.append("That was the highest-EV option.")
     return " ".join(parts)
 
 
@@ -593,11 +814,77 @@ def get_coach():
 # Convenience: full report for a finished hand
 # =========================================================================== #
 
+def _attach_implied(key, history):
+    """Run the multi-street rollout for the spotlight CALL spot (heads-up) and
+    fold implied / reverse-implied odds into the key decision — Hold'em or stud."""
+    try:
+        h = next((x for x in history if _wrapget(x)("street") == key.street), None)
+        if h is None:
+            return
+        g = _wrapget(h)
+        game = g("game") or "stud"
+        if betting.family(g("action")) != "call" or key.to_call <= 0:
+            return
+
+        res = None
+        if game == "holdem":
+            if max(1, int(g("num_live_opponents") or 1)) != 1:
+                return
+            board = g("board_cards") or []
+            if not board:
+                return                              # need a board to model future streets
+            hero = g("hero_hole_cards")
+            # Same betting range the EV grid used (deterministic seed): the
+            # opponent's strongest half by equity vs hero.
+            _s, _t, _vr, combos = rng_mod.holdem_range_samples(
+                hero, board, iterations=COND_ITERS_POST,
+                max_combos=COND_MAX_COMBOS, seed=GRADING_SEED)
+            keep = max(1, int(len(combos) * BET_RANGE_FREQ))
+            res = ro.holdem_call_ev(
+                hero, board, pot=key.pot, to_call=key.to_call,
+                villain_range_combos=combos[:keep], trials=ROLLOUT_TRIALS,
+                seed=GRADING_SEED)
+        else:
+            opp_lists = g("opponents_up_cards")
+            if opp_lists is None:
+                legacy = g("villain_up_cards")
+                opp_lists = [legacy] if legacy is not None else []
+            if len(opp_lists) != 1:
+                return
+            hero, vup = g("hero_known_cards"), opp_lists[0]
+            from itertools import combinations
+            pool = rng_mod.remaining_deck(rng_mod.as_cards(hero) + rng_mod.as_cards(vup))
+            hidden = list(combinations(pool, 2))
+            hidden.sort(key=lambda hc: rng_mod._stud_partial_strength(
+                rng_mod.as_cards(vup) + list(hc)), reverse=True)
+            keep = max(1, int(len(hidden) * BET_RANGE_FREQ))
+            res = ro.stud_call_ev(
+                hero, vup, pot=key.pot, to_call=key.to_call,
+                villain_hidden_range=hidden[:keep], trials=ROLLOUT_TRIALS,
+                seed=GRADING_SEED)
+
+        if not res:
+            return
+        key.implied = res
+        chosen = next((o for o in key.options if o.get("label") == key.action), None)
+        best_opt = next((o for o in key.options if o.get("label") == key.best_action), chosen)
+        key.math = _decision_math(
+            chosen, best_opt, key.equity, key.pot, key.to_call,
+            key.option_evs.get(key.action, 0.0),
+            key.option_evs.get(key.best_action, 0.0),
+            vs_random=key.equity_vs_random, eff=key.equity_effective,
+            conditioned=key.conditioned, fold_eq=key.fold_equity, implied=res)
+    except Exception:
+        pass            # implied odds are a bonus; never break the report
+
+
 def full_report(history, coach=None) -> dict:
     coach = coach or get_coach()
     grades = grade_hand(history)
     overview = hand_overview(grades)
     key = pick_key_decision(grades)
+    if key is not None:
+        _attach_implied(key, history)
     translation = coach.translate(grades, key) if key else None
     return {
         "overview": overview,

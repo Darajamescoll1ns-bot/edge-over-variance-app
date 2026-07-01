@@ -14,6 +14,54 @@ function _termsTab(terms){
        + `<div class="term-list">${items}</div></details>`;
 }
 
+function _pct(x){ return Math.round((x||0)*100) + '%'; }
+function _ev(x){ return (x>=0?'+':'') + (Math.round(x*10)/10); }
+function _mchip(label, val, tone){
+  return `<span class="m-chip ${tone||''}"><span class="m-k">${label}</span><b>${val}</b></span>`;
+}
+
+// One tidy card per decision: the key numbers as chips, a plain-English
+// takeaway, and (on the spotlight decision) the implied-odds result. The full
+// arithmetic stays available behind a "full arithmetic" toggle.
+function _decisionCard(s){
+  const q = s.adherence>=70 ? 'good' : (s.adherence<40 ? 'bad' : 'mid');
+  const chips = [];
+  if (s.conditioned){
+    chips.push(_mchip('vs random', _pct(s.equity_vs_random)));
+    const tone = s.equity_effective < s.equity_vs_random-0.005 ? 'down'
+               : (s.equity_effective > s.equity_vs_random+0.005 ? 'up' : '');
+    chips.push(_mchip('when called', _pct(s.equity_effective), tone));
+  } else {
+    chips.push(_mchip('equity', _pct(s.equity)));
+  }
+  if (s.to_call>0) chips.push(_mchip('break-even', _pct(s.to_call/(s.pot+s.to_call))));
+  if (s.fold_equity>0) chips.push(_mchip('fold equity', _pct(s.fold_equity)));
+  const taken = s.option_evs ? s.option_evs[s.action] : null;
+  if (taken!=null) chips.push(_mchip('your EV', _ev(taken), taken>=0?'up':'down'));
+  if (s.best_action && s.best_action!==s.action && s.option_evs && s.option_evs[s.best_action]!=null){
+    chips.push(_mchip('best · '+_esc(s.best_action), _ev(s.option_evs[s.best_action])));
+  }
+
+  let implied = '';
+  if (s.implied){
+    const d = Math.round(s.implied.implied_delta*10)/10;
+    implied = `<div class="m-implied">⟳ <b>Implied odds</b> (simulated to showdown): true EV ≈ `
+      + `<b>${_ev(s.implied.ev_call)}</b> — `
+      + (d>=0 ? `${_ev(d)} extra won on later streets when you improve.`
+              : `${d} — reverse implied odds: you pay off better hands.`)
+      + `</div>`;
+  }
+
+  return `<div class="m-card ${q}">`
+    + `<div class="m-head"><span class="m-street">${_esc(s.street_name)} · you ${_esc(s.action)}</span>`
+    + `<span class="m-q ${q}">${s.adherence}/100</span></div>`
+    + `<div class="m-chips">${chips.join('')}</div>`
+    + `<div class="m-why">${_esc(s.why||'')}</div>`
+    + implied
+    + (s.math ? `<details class="m-detail"><summary>full arithmetic</summary><p>${_esc(s.math)}</p></details>` : '')
+    + `</div>`;
+}
+
 function reportHtml(rep, res){
   const t = rep.translation || {};
   let html = `<h2>Hand report</h2>`;
@@ -40,14 +88,11 @@ function reportHtml(rep, res){
   });
   html += `</tbody></table>`;
 
-  // The math behind each decision.
-  const mathRows = (rep.streets || []).filter(s => s.math);
+  // The math behind each decision — a clean, structured breakdown.
+  const mathRows = (rep.streets || []);
   if (mathRows.length) {
-    let items = mathRows.map(s =>
-      `<div class="math-row"><span class="math-street">${_esc(s.street_name)} · `
-      + `you ${_esc(s.action)}</span><span class="math-text">${_esc(s.math)}</span></div>`).join('');
     html += `<details class="glossary" open><summary>📐 The math behind each decision</summary>`
-          + `<div class="math-list">${items}</div></details>`;
+          + `<div class="m-list">${mathRows.map(_decisionCard).join('')}</div></details>`;
   }
 
   // Markets translation — the teaching moment.

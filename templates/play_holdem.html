@@ -6,37 +6,18 @@
   <a href="/play/table">Stud table</a>
   <a class="active" href="/play/holdem">Hold'em</a>
 </div>
-<h1>Texas Hold'em — full table</h1>
-<p class="lede">Each hand seats a <strong>random 2–8 players</strong>. You see your two hole
-cards and the shared board — never opponents' cards — so the read is the board, the
-number of live players, and pot odds. Graded street by street, then translated to the
-markets.
+<h1>Texas Hold'em</h1>
+<p class="lede">Each hand seats <strong>random 2–8 players</strong> and gives you a
+<strong>random position</strong> (shown next to your seat) — play your spot. You're graded
+street by street, then the key decision is translated to the markets.
 <span class="muted">Coach: {{ coach_source }}{% if coach_source == 'library' %}
  (set <code>ANTHROPIC_API_KEY</code> for AI-tailored coaching){% endif %}</span></p>
 
-<div id="table" class="table">
-  <div id="opps" class="opp-row"></div>
-
-  <div class="board-area">
-    <div class="seat-label">Board</div>
-    <div id="board" class="cards-row"></div>
-  </div>
-
-  <div class="potline"><span id="pot">Pot: —</span> <span id="street"></span></div>
-
-  <div class="hero-seat">
-    <div class="seat-label">Your hole cards</div>
-    <div id="hero-cards" class="cards-row"></div>
-  </div>
-
-  <div id="actions" class="actions"></div>
-  <div id="tocall" class="muted"></div>
-</div>
-
+<div id="felt" class="pk"></div>
 <div id="log" class="playlog"></div>
 <div id="report" class="report" style="display:none"></div>
 
-<script src="/static/cards.js"></script>
+<script src="/static/table.js"></script>
 <script src="/static/report.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -44,49 +25,11 @@ let HAND = null;
 
 function render(state){
   HAND = state;
-  $('pot').textContent = 'Pot: ' + state.pot;
-  $('street').textContent = state.finished ? 'hand complete'
-      : (state.street_name + ' · ' + state.num_opponents + ' opponents');
-
-  const oppRow = $('opps'); oppRow.innerHTML = '';
-  (state.opponents||[]).forEach(o => {
-    const seat = document.createElement('div');
-    seat.className = 'opp' + (o.folded ? ' folded' : '');
-    const name = document.createElement('div'); name.className = 'opp-name';
-    name.innerHTML = o.name + (o.folded ? '<span class="badge-fold">folded</span>' : '');
-    const row = document.createElement('div'); row.className = 'cards-row';
-    for (let i=0;i<o.hidden;i++) row.appendChild(makeCard('', false, {mini:true}));
-    seat.appendChild(name); seat.appendChild(row);
-    oppRow.appendChild(seat);
-  });
-
-  const bd = $('board'); bd.innerHTML = '';
-  (state.board||[]).forEach(c => bd.appendChild(makeCard(c, true)));
-  if ((state.board||[]).length === 0){
-    const ph = document.createElement('span'); ph.className='muted'; ph.textContent='(preflop — no community cards yet)';
-    bd.appendChild(ph);
-  }
-
-  const hh = $('hero-cards'); hh.innerHTML = '';
-  state.hero.forEach(c => hh.appendChild(makeCard(c.card, true)));
-
+  PokerTable.render(state, {container: $('felt'), game: 'holdem',
+                            title: "Texas Hold'em", onAction: doAct});
   const log = $('log'); log.innerHTML = '';
   (state.log||[]).forEach(line => { const p=document.createElement('div'); p.textContent=line; log.appendChild(p); });
-
-  const act = $('actions'); act.innerHTML = ''; $('tocall').textContent = '';
-  if (state.finished){ showReport(state); return; }
-  if (state.awaiting){
-    const bits = [];
-    if (state.awaiting.hero_stack != null) bits.push('Your stack: ' + state.awaiting.hero_stack);
-    if (state.awaiting.to_call > 0) bits.push('To call: ' + state.awaiting.to_call);
-    $('tocall').textContent = bits.join('  ·  ');
-    state.awaiting.options.forEach(o => {
-      const b = document.createElement('button');
-      b.textContent = o.label;
-      b.classList.add(o.key === 'fold' ? 'act-fold' : (o.key === 'check' || o.key === 'call' ? 'act-call' : 'act-raise'));
-      b.onclick = () => doAct(o.key); act.appendChild(b);
-    });
-  }
+  if (state.finished) showReport(state);
 }
 
 async function newHand(){

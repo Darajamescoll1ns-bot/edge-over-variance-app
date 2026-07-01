@@ -45,6 +45,22 @@ MAX_PLAYERS = 8
 MAX_RAISES_PER_STREET = 3
 BOT_ITERS = 350
 
+# Position labels by seat offset from the dealer button, so the player can see
+# where they're sitting each hand (the button is randomised every deal).
+_MIDS = {0: [], 1: ["CO"], 2: ["UTG", "CO"], 3: ["UTG", "HJ", "CO"],
+         4: ["UTG", "MP", "HJ", "CO"], 5: ["UTG", "UTG+1", "MP", "HJ", "CO"]}
+
+
+def _position_labels(n: int, button: int) -> dict:
+    """seat index -> position label (BTN/SB/BB/UTG…/CO) for an n-handed table."""
+    if n == 2:
+        return {button % n: "BTN", (button + 1) % n: "BB"}   # heads-up: BTN posts SB
+    labels = {button % n: "BTN", (button + 1) % n: "SB", (button + 2) % n: "BB"}
+    mids = _MIDS.get(n - 3, ["UTG"] * max(0, n - 3))
+    for j, lab in enumerate(mids):
+        labels[(button + 3 + j) % n] = lab
+    return labels
+
 
 def _card_str(c) -> str:
     return f"{sv.RANKS[c[0] - 2]}{sv.SUITS[c[1]]}"
@@ -121,6 +137,8 @@ class HandState:
         return self.board[:BOARD_SHOWN[self.street]]
 
     def public_state(self) -> dict:
+        n = len(self.players)
+        pos = _position_labels(n, self.button)
         return {
             "hand_id": self.hand_id,
             "game": "holdem",
@@ -129,12 +147,17 @@ class HandState:
             "street_name": STREET_NAMES[self.street],
             "hero": [{"card": _card_str(c), "up": True} for c in self.hero.hole],
             "hero_stack": round(self.hero.stack, 1),
+            "hero_position": pos.get(0),
+            "hero_is_button": self.button == 0,
+            "button_seat": self.button,
             "board": [_card_str(c) for c in self.board_shown()],
             "opponents": [
                 {"name": p.name,
                  "hidden": 0 if p.folded else 2,
                  "folded": p.folded,
-                 "stack": round(p.stack, 1)}
+                 "stack": round(p.stack, 1),
+                 "position": pos.get(p.idx),
+                 "is_button": p.idx == self.button}
                 for p in self.opponents
             ],
             "pot": round(self.pot, 2),

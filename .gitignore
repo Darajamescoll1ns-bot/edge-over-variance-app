@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Local runtime data (sessions are generated at runtime)
+data/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
